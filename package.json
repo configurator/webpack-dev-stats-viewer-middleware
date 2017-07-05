@@ -1,0 +1,16 @@
+{
+  "name": "webpack-dev-stats-viewer-middleware",
+  "version": "1.0.0",
+  "description": "Stats viewer for webpack-dev-middleware",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/configurator/webpack-dev-stats-viewer-middleware.git"
+  },
+  "author": "configurator",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/configurator/webpack-dev-stats-viewer-middleware/issues"
+  },
+  "homepage": "https://github.com/configurator/webpack-dev-stats-viewer-middleware#readme"
+}
