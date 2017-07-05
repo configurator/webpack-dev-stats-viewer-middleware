@@ -1,0 +1,298 @@
+<html>
+    <head>
+        <title>Build stats viewer</title>
+        <style>
+            html, body {
+                width: 100vw;
+                height: 100vh;
+                margin: 0;
+
+                display: flex;
+                font-family: 'Fira Code', 'Courier New', monospace;
+                font-size: 11pt;
+            }
+
+            section {
+                flex: 1;
+                border: 1px solid black;
+                margin: 0.5em;
+
+                overflow: auto;
+            }
+
+            label {
+                cursor: pointer;
+            }
+
+            .treeview ul {
+                list-style: none;
+                margin: 0;
+                padding: 0 0 0 0.25em;
+
+                background: rgba(0, 0, 0, 0.04);
+            }
+
+            .treeview li {
+                padding: 0.2em 0 0.2em 1em;
+                border-bottom: 1px dashed white;
+            }
+
+            .treeview li.primitive {
+                max-height: 10em;
+                overflow: auto;
+            }
+
+            .treeview li[key]::before {
+                content: attr(key) ': ';
+
+                margin-left: -1em;
+
+                color: blueviolet;
+                font-family: 'Fira Code', 'Courier New', monospace;
+                font-size: 11pt;
+            }
+
+            .treeview input[type=checkbox] {
+                opacity: 0;
+                width: 0;
+                margin: 0;
+            }
+            .treeview input[type=checkbox] ~ label::before {
+                content: '[+] '
+            }
+            .treeview input[type=checkbox]:checked ~ label::before {
+                content: '[-] '
+            }
+
+            .treeview input[type=checkbox] ~ ul {
+                display: none;
+            }
+
+            .treeview input[type=checkbox]:checked ~ ul {
+                display: block;
+            }
+
+            .loading::before {
+                content: 'Loading...';
+            }
+
+            .special-type, .loading {
+                font-family: Arial, Helvetica, sans-serif;
+                font-style: italic;
+                font-size: smaller;
+                color: grey;
+            }
+
+            .stale {
+                border: 1px solid orange;
+                position: relative;
+            }
+            .stale::after {
+                content: ' ';
+
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                height: 16px;
+                padding: 2px 20px 2px 2px;
+
+                border: 1px solid transparent;
+
+                background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABvUlEQVR4nI2SwW4TMRCGPyfetCkJTRaIWopEqxRo4IDU0/Yd+gS9wL08D8+yb2ApN04gUUAqUrRw6CZNK7Rrr4fDptlGSQQjjSz7n/n8yx5YE0kcRtlwT7LhniRxGK2r0+uEbtg06sU5IHS/fjSAWlVXW3e790LQ2SfoHOALYZ2LlYBWq2Hqrz7M9/Wjc1qthvkvQBKHkXOeoL2DUmcodYZu71IUfqWLJYDWNdN8/R5xN9Whm7I5eIfW9SUXC4DydiFotsFeV4KdEjQf4lyx5GIB4HJvOoNTJJ9APq6EfIzYCd3BKc56sxKQxGFkrSdoaMhTxKbzIslTyFP0RoDNF99iDpimmXly+AaxKZJfIVkFIE+RWYb9Y67TzCwAkjiMrPNsbG1CloIdl3nfQVbmg1YN5yoXGuDX6Nbs7vfAjpF5m8J+PgYR5B4MFN2dHr9/JgZQOonDaHQ5pfOogdgpCimHVhTB24vyEz7173oBeNzTjH6ULvTlt4l5frgN7gZQCIKardX33MJMYXb+9NkWl98nRheFgDgoirnFu+Z8uF2+QfGnggmIAvGWwnn0wcvOycWXq5Vz/q/oH4UnfwFlZuAVdLyXBQAAAABJRU5ErkJggg==) top 2px right 2px no-repeat;
+            }
+            .stale:hover::after {
+                content: 'This element is from the result of a previous build; click to refresh. ';
+                background-color: white;
+                border-color: orange;
+            }
+        </style>
+    </head>
+    <body>
+        <section class="treeview">
+            <ul>
+                <li id="root-item"></li>
+            </ul>
+        </section>
+        <script>
+            function itemPreview(data) {
+                function getProprety(name) {
+                    var index = data.keys.indexOf(name);
+                    return data.values[index] || '';
+                }
+
+                switch (data.objectType) {
+                    case 'Date':
+                    case 'RegExp':
+                        return data.string;
+
+                    case 'Array':
+                        return 'Array (length: ' + data.keys.length + ') [ ... ]';
+
+                    case 'Object':
+                        switch (data.constructorName) {
+                            case 'Module':
+                            case 'NormalModule':
+                                return 'Module ' + getProprety('resource') + ' { ... }';
+
+                            case 'Chunk':
+                                return 'Chunk ' + getProprety('name') + ' { ... }';
+                        }
+                }
+
+                // If no other return was encountered, we don't have special handling for this type
+                var type = data.objectType;
+                if (type === 'Object' && data.constructorName) {
+                    type = data.constructorName;
+                }
+                return type + ' { ... }';
+            }
+
+            function loadItem(element) {
+                if (element.isLoaded && !element.stale) {
+                    return;
+                }
+                element.isLoaded = true;
+                element.stale = false;
+
+                element.classList.add('loading');
+                element.classList.remove('stale');
+
+                var id = element.loadKey || '';
+
+                var request = new XMLHttpRequest();
+                request.addEventListener('load', function () {
+                    var response = JSON.parse(request.responseText);
+                    setLatestHash(response.hash);
+                    displayItem(element, id, response);
+                    element.classList.remove('loading');
+                });
+                request.open('GET', '/dev-server/stats/data?select=' + id);
+                request.send();
+            }
+
+            function displayItem(element, id, data) {
+                element.innerHTML = '';
+                element.loadedValue = data;
+                element.setAttribute('hash', data.hash);
+
+                switch (data && data.type) {
+                    case 'undefined':
+                    case 'null':
+                    case 'function':
+                        element.classList.add('special-type');
+                        element.innerText = '(' + data.type + ')';
+                        element.title = data && data.toString;
+                        break;
+
+                    case 'boolean':
+                    case 'number':
+                        element.innerText = data;
+                        break;
+
+                    case 'string':
+                        element.innerText = '"' + data + '"';
+                        break;
+
+                    case 'object':
+                        displayClosedItem(element, id, data, itemPreview(data));
+                        break;
+
+                    default:
+                        element.classList.add('special-type');
+                        element.innerText = '(unknown type ' + data.type + ')';
+                        break;
+                }
+            }
+
+            function displayClosedItem(element, id, data, text) {
+                element.innerText = '';
+
+                var checkboxId = 'open-' + id;
+
+                var checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = checkboxId;
+                checkbox.addEventListener('change', function () { openItem(element); });
+                element.appendChild(checkbox);
+
+                var label = document.createElement('label');
+                label.setAttribute('for', checkboxId);
+                label.innerText = text;
+                element.appendChild(label);
+
+                var list = document.createElement('ul');
+                if (data.string && !data.string.startsWith('[object')) {
+                    var item = document.createElement('li');
+                    item.classList.add('primitive');
+                    item.setAttribute('key', 'toString');
+                    item.loadedValue = data.string;
+                    item.isLoaded = true;
+                    item.innerText = data.string;
+                    list.appendChild(item);
+                }
+                if (data.value) {
+                    var item = document.createElement('li');
+                    item.classList.add('primitive');
+                    item.setAttribute('key', 'valueOf');
+                    item.loadedValue = data.value;
+                    item.isLoaded = true;
+                    item.innerText = data.value;
+                    list.appendChild(item);
+                }
+
+                if (data.keys && data.values) {
+                    for (var index = 0; index < data.keys.length; index++) {
+                        var key = data.keys[index];
+                        var value = data.values[index];
+                        var isLoaded = value !== null;
+                        if (!isLoaded) {
+                            value = '';
+                        }
+
+                        var item = document.createElement('li');
+                        if (isLoaded) {
+                            item.classList.add('primitive');
+                        }
+                        item.setAttribute('key', key);
+                        item.key = key;
+                        item.loadedValue = value;
+                        item.loadKey = (id ? id + '.' : '') + key;
+                        item.isLoaded = isLoaded;
+                        item.innerText = value;
+                        list.appendChild(item);
+                    }
+                }
+                element.appendChild(list);
+            }
+
+            function openItem(element) {
+                var list = element.querySelector('ul');
+                var elements = list.children;
+                for (var i = 0; i < elements.length; i++) {
+                    loadItem(elements[i]);
+                }
+            }
+
+            function setLatestHash(hash) {
+                if (!hash) {
+                    return;
+                }
+
+                if (window.latestHash === hash) {
+                    return;
+                }
+
+                var previousHash = window.latestHash;
+                window.latestHash = hash;
+
+                var staleElements = document.querySelectorAll('[hash=' + previousHash + ']');
+                staleElements.forEach(function (element) {
+                    element.stale = true;
+                    element.classList.add('stale');
+                });
+            }
+
+            loadItem(document.getElementById('root-item'), '');
+        </script>
+    </body>
+</html>
